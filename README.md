@@ -3,13 +3,7 @@
 Failed At Keyboard Education  
 by Echoes from the Shield
 
-## Temporary dependency notice
-
-At the moment, FAKE is not fully self-contained: its SuperCollider engine depends on `Bgs` and `OneshVoicer`, and those classes are not bundled in this repo yet. This is a packaging mistake on my side, and I will fix it very soon by making the engine self-contained.
-
-Temporary workaround: install `pixels` and then restart SuperCollider / reboot norns before launching FAKE. The installation order should not matter after a restart, but if you are installing from scratch, install `pixels` before running FAKE.
-
-Once this repo is fixed, `pixels` will no longer be required.
+A special thanks to Arman Bohn and [`pixels`](https://github.com/distropolis/pixels), which strongly inspired this script. FAKE borrows the underlying idea of a generative, voice-driven Norns instrument from `pixels`, and includes namespaced local adaptations of two helper SuperCollider classes originally used there: the waveform/performance helper behind the engine (`Bgs`) and the voice allocator (`OneshVoicer`).
 
 ## Overview
 
@@ -370,7 +364,7 @@ Per-event amplitude:
 
 Per voice:
 
-- `Bgs.perform(...)`
+- `FAKE_Bgs.perform(...)`
 - soft saturation via `tanh`
 - `LeakDC`
 - `RLPF`
@@ -796,6 +790,16 @@ Mapped parameter groups include:
 - rhythm motion on/preset/rate
 - chord engage
 
+## Troubleshooting
+
+If FAKE gets stuck on `loading`:
+
+1. update to the latest version of the repo
+2. restart SuperCollider or reboot Norns
+3. try loading FAKE again
+
+This issue was previously caused by missing external SuperCollider classes on clean systems. FAKE is now self-contained and should load both on clean installs and on systems that already have `pixels` or `thebangs` installed.
+
 ## Controls
 
 ### Global
@@ -896,3 +900,12 @@ Page assignments:
 - Manual waveform selection is the anchor for timbre motion.
 - Manual Scale Presence is the anchor for presence motion.
 - Manual Tempo Subdivision and Probability are the anchors for rhythm motion.
+
+## Attribution
+
+FAKE vendors namespaced adaptations of two SuperCollider helper classes originally used by `pixels`:
+
+- `FAKE_Bgs` adapted from `pixels/lib/bgs.sc`
+- `FAKE_OneshVoicer` adapted from `pixels/lib/OneshVoicer.sc`
+
+The local `FAKE_` class names are used only to make FAKE self-contained and to prevent duplicate class conflicts with existing `pixels` or `thebangs` installations.

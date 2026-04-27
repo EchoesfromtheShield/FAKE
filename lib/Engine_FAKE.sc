@@ -36,8 +36,8 @@ Engine_FAKE : CroneEngine {
   alloc {
     server = context.server;
     group = Group.new(server);
-    voicer = OneshVoicer.new(8);
-    freezeVoicer = OneshVoicer.new(8);
+    voicer = FAKE_OneshVoicer.new(8);
+    freezeVoicer = FAKE_OneshVoicer.new(8);
 
     hz1 = 330;
     hz2 = 10000;
@@ -178,7 +178,7 @@ Engine_FAKE : CroneEngine {
           ender = EnvGen.ar(Env.asr(0, 1, 0.01), gate: gate, doneAction: Done.freeSelf);
         });
 
-        snd = Bgs.perform(currentBang, currentHz1, currentMod1, currentHz2, currentMod2, toneEnv);
+        snd = FAKE_Bgs.perform(currentBang, currentHz1, currentMod1, currentHz2, currentMod2, toneEnv);
 
         driveGain = 1 + (currentDrive * 8);
         driveTrim = driveGain.pow(-0.35);
