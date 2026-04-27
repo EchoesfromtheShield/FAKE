@@ -3,6 +3,14 @@
 Failed At Keyboard Education  
 by Echoes from the Shield
 
+## Temporary dependency notice
+
+At the moment, FAKE is not fully self-contained: its SuperCollider engine depends on `Bgs` and `OneshVoicer`, and those classes are not bundled in this repo yet. This is a packaging mistake on my side, and I will fix it very soon by making the engine self-contained.
+
+Temporary workaround: install `pixels` and then restart SuperCollider / reboot norns before launching FAKE. The installation order should not matter after a restart, but if you are installing from scratch, install `pixels` before running FAKE.
+
+Once this repo is fixed, `pixels` will no longer be required.
+
 ## Overview
 
 F.A.K.E. is a generative arpeggiator built around Scale Presence: a control that limits or expands the harmonic pool used by the pattern engine, from sparse tonal anchors to full-scale motion. The script combines:
