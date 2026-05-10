@@ -260,6 +260,9 @@ This is not MIDI velocity tracking. It is an internal event-level amplitude mode
 
 Available subdivisions:
 
+- `32`
+- `16`
+- `8`
 - `4`
 - `2`
 - `1`
@@ -273,12 +276,12 @@ The sequencer uses `clock.sync()` on the current effective subdivision.
 
 ### Chord Timing
 
-When chord mode is active, the effective subdivision is multiplied by `2`.
+When chord mode is active, the effective subdivision is multiplied by the Chord Engine `Tempo Multiplier`.
 
 Result:
 
-- the same subdivision produces half as many events in chord mode
-- chord mode feels slower and more spacious than note mode
+- available multipliers are `4`, `2`, `1`, `1/2`, `1/4`
+- this allows chord events to run from `4x` slower to `4x` faster than the current engine subdivision
 
 ## Freeze Model
 
@@ -390,7 +393,7 @@ Mapping:
 - minimum position -> cutoff `500 Hz`, resonance `4`
 - maximum position -> cutoff `16000 Hz`, resonance `0`
 
-This macro updates the same cutoff and resonance parameters used on the dedicated filter page.
+The dedicated filter page exposes cutoff and resonance as independent manual parameters. Using the macro filter or page 5 filter automation will then overwrite those current values with the macro-derived pair.
 
 ## Filter Automation
 
@@ -405,9 +408,11 @@ Parameters:
 Behavior:
 
 - the manual macro filter position is the base
+- page 5 shows both the base cutoff and the current effective cutoff
 - the LFO modulates around that base
-- modulation amount is `waveValue * depth * 0.5`
-- final macro position is clamped to `0..1`
+- positive and negative LFO excursions are scaled to the available room above and below the current base position
+- this avoids truncating one half of the waveform when the base is near either end of the macro range
+- very slow LFO rates are available for long filter sweeps
 
 The LFO runs in the visual refresh metro, not as an audio-rate modulation.
 
@@ -614,7 +619,7 @@ Parameters:
 - Motion: On/Off
 - Preset
 - Rate: `0.25x..4.00x`
-- Chord Engage: `0..100%`
+- Root Accent: On/Off
 
 General behavior:
 
@@ -624,6 +629,7 @@ General behavior:
 - division offsets reflect at the available subdivision boundaries
 - probability offsets clamp to `5..100`
 - effective duration is `round(base duration / rate)` with a minimum of 1 step
+- when `Root Accent` is on, a root note change forces the next available non-freeze step to emit an event, bypassing probability once
 
 Rhythm motion advances on every sequencer step, except while freeze is active or releasing.
 
@@ -721,16 +727,21 @@ Character:
 
 - holds a rhythmic condition for longer spans, then jumps to a new one
 
-## Automatic Chord Engage
+## Chord Engine
 
-The Rhythm Engine includes an additional probability control: `Chord Engage`.
+Page 9 adds two chord controls:
+
+- `Chord Chance`: `0..100%`
+- `Tempo Multiplier`: `4`, `2`, `1`, `1/2`, `1/4`
+
+### Automatic Chord Engage
 
 Behavior:
 
 - evaluated once per sequencer step
 - ignored if manual chord mode is already held
 - if triggered, the current step behaves like chord mode
-- chord timing still uses the chord subdivision multiplier of `2`
+- chord timing uses the current Chord Engine `Tempo Multiplier`
 - auto-engaged chord mode is per-step only
 - freeze remains manual
 
@@ -759,6 +770,9 @@ Instead:
 
 - the script connects globally to all visible Norns MIDI ports
 - incoming `note_on` messages set the root pitch class
+- `MIDI In Channel` can be set to `All` or `1..16` in Norns `params`
+- if Norns clock source is set to `midi`, incoming MIDI transport `start` / `stop` will start and stop F.A.K.E.
+- local playback start / stop sends MIDI transport `start` / `stop` to connected ports when the script is not following external MIDI clock
 - all major musical and performance parameters are exposed through Norns `params`
 - those params can be mapped in `EDIT / MAP`
 
@@ -767,6 +781,7 @@ Mapped parameter groups include:
 - playback
 - chord mode
 - freeze
+- MIDI in channel
 - note
 - tempo subdivision
 - scale
@@ -787,8 +802,9 @@ Mapped parameter groups include:
 - filter LFO rate/depth/wave
 - timbre motion on/preset/rate
 - presence motion on/preset/rate
-- rhythm motion on/preset/rate
-- chord engage
+- rhythm motion on/preset/rate/root accent
+- chord chance
+- chord tempo multiplier
 
 ## Troubleshooting
 
@@ -837,6 +853,8 @@ Page assignments:
 - Page 6: TIMBRE AUTOMATION
 - Page 7: SCALE PRESENCE AUTOMATION
 - Page 8: RHYTHM ENGINE
+- Page 9: CHORD ENGINE
+- Page 10: SCENES
 
 ## Page Summary
 
@@ -888,18 +906,30 @@ Page assignments:
 - Motion
 - Preset
 - Rate
-- Chord Engage
+- Root Accent
+
+### Page 9 - CHORD ENGINE
+
+- Chord Chance
+- Tempo Multiplier
+
+### Page 10 - SCENES
+
+- Slot
+- Save Scene
+- Load Scene
 
 ## Operational Notes
 
 - Timbre motion and rhythm motion advance on clocked sequencer steps.
 - Presence motion advances only on sounding events.
 - Freeze suspends motion advancement until release is complete.
-- Chord mode always halves event density by doubling the effective subdivision value.
+- Chord mode timing uses the current Chord Engine tempo multiplier.
 - The visualizer shows effective presence and effective probability, not only anchor values.
 - Manual waveform selection is the anchor for timbre motion.
 - Manual Scale Presence is the anchor for presence motion.
 - Manual Tempo Subdivision and Probability are the anchors for rhythm motion.
+- Scene save/load writes and reads full parameter snapshots to `dust/data/FAKE/scenes`.
 
 ## Attribution
 

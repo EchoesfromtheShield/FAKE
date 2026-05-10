@@ -42,7 +42,7 @@
 -- Scale Presence
 -- Probability
 --
--- Page 2 - 8:
+-- Page 2 - 10:
 -- E2 select
 -- parameter
 -- E3 edit
@@ -107,13 +107,19 @@
 -- Motion
 -- Preset
 -- Rate
--- Chord Engage %
+-- Root Accent
+--
+-- Page 9 -
+-- CHORD ENGINE:
+-- Parameters:
+-- Chord Chance %
+-- Tempo Multiplier
 
 engine.name = "FAKE"
 
 local notes = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
-local tempo_divisions = {"4", "2", "1", "1/2", "1/4", "1/8", "1/16", "1/32"}
-local clock_divisions = {4, 2, 1, 1 / 2, 1 / 4, 1 / 8, 1 / 16, 1 / 32}
+local tempo_divisions = {"32", "16", "8", "4", "2", "1", "1/2", "1/4", "1/8", "1/16", "1/32"}
+local clock_divisions = {32, 16, 8, 4, 2, 1, 1 / 2, 1 / 4, 1 / 8, 1 / 16, 1 / 32}
 local scales = {
     {name = "Harmonic Minor", intervals = {0, 2, 3, 5, 7, 8, 11}},
     {name = "Major", intervals = {0, 2, 4, 5, 7, 9, 11}},
@@ -223,10 +229,10 @@ local clock_id = nil
 local visual_metro = nil
 
 local page = 1
-local max_pages = 8
+local max_pages = 10
 
 local selected_note = 1
-local selected_division = 3
+local selected_division = 6
 local selected_scale = 1
 local selected_presence = 1
 local current_presence = 1
@@ -392,11 +398,13 @@ local rhythm_motion = {
     enabled = false,
     preset_index = 1,
     rate = 1.0,
+    root_accent = false,
+    root_change_pending = false,
     step_index = 1,
     order_rotation = 0,
     duration_rotation = 0,
     steps_remaining = 0,
-    current_division_index = 3,
+    current_division_index = 6,
     current_probability = 100,
     chord_engage = 0
 }
@@ -409,7 +417,9 @@ local visual_particles = {}
 local ui_state = {
     visualizer_shift_held = false,
     visualizer_param_index = 1,
-    current_params = {1, 1, 1, 1, 1, 1, 1}
+    current_params = {1, 1, 1, 1, 1, 1, 1, 1, 1},
+    scene_slot = 1,
+    scene_status = "Ready"
 }
 local performance_state = {
     button_1_held = false,
@@ -423,15 +433,18 @@ local performance_state = {
     freeze_releasing = false,
     freeze_release_until = 0,
     freeze_release_seconds = 0.25,
-    auto_chord_for_step = false
+    auto_chord_for_step = false,
+    chord_tempo_index = 2
 }
-local midi_state = {devices = {}}
+local midi_state = {devices = {}, input_channel = 0}
 local param_state = {
     syncing = false,
+    scene_loading = false,
     ids = {
         playback = "fake_playback",
         chord_mode = "fake_chord_mode",
         freeze = "fake_freeze",
+        midi_channel = "fake_midi_channel",
         note = "fake_note",
         division = "fake_division",
         scale = "fake_scale",
@@ -461,7 +474,9 @@ local param_state = {
         rhythm_motion = "fake_rhythm_motion",
         rhythm_preset = "fake_rhythm_preset",
         rhythm_rate = "fake_rhythm_rate",
-        rhythm_chord = "fake_rhythm_chord"
+        rhythm_root_accent = "fake_rhythm_root_accent",
+        rhythm_chord = "fake_rhythm_chord",
+        chord_multiplier = "fake_chord_multiplier"
     }
 }
 
@@ -471,7 +486,7 @@ local params_page_3 = {"Cutoff", "Resonance", "Drive", "Pan Rate", "Pan Depth"}
 local params_page_4 = {"LFO Rate", "LFO Depth", "LFO Wave"}
 local params_page_5 = {"Motion", "Preset", "Rate"}
 local params_page_6 = {"Motion", "Preset", "Rate"}
-local params_page_7 = {"Motion", "Preset", "Rate", "Chord Engage"}
+local params_page_7 = {"Motion", "Preset", "Rate", "Root Accent"}
 local visualizer_params = {"Note", "Tempo Subdivision", "Octaves", "Scale Presence", "Probability"}
 local page_titles = {
     [2] = "2 - ARP. SETTINGS",
@@ -480,7 +495,9 @@ local page_titles = {
     [5] = "5 - FILTER AUTOMATION",
     [6] = "6 - TIMBRE AUTOMATION",
     [7] = "7 - SCALE PRESENCE AUTOMATION",
-    [8] = "8 - RHYTHM ENGINE"
+    [8] = "8 - RHYTHM ENGINE",
+    [9] = "9 - CHORD ENGINE",
+    [10] = "10 - SCENES"
 }
 local chord_note_count = 3
 
@@ -1136,7 +1153,13 @@ local function reset_phrase_memory()
 end
 
 local function change_note(delta)
-    selected_note = util.wrap(selected_note + delta, 1, #notes)
+    local next_note = util.wrap(selected_note + delta, 1, #notes)
+
+    if next_note ~= selected_note and rhythm_motion.root_accent then
+        rhythm_motion.root_change_pending = true
+    end
+
+    selected_note = next_note
     reset_phrase_memory()
 end
 
@@ -1293,7 +1316,14 @@ local function update_filter_swipe_state(push_to_engine)
     local modulation = 0
 
     if filter_lfo_rate > 0 and filter_lfo_depth > 0 then
-        modulation = filter_lfo_current * filter_lfo_depth * 0.5
+        local downward_room = filter_swipe_base
+        local upward_room = 1 - filter_swipe_base
+
+        if filter_lfo_current >= 0 then
+            modulation = filter_lfo_current * filter_lfo_depth * upward_room
+        else
+            modulation = filter_lfo_current * filter_lfo_depth * downward_room
+        end
     end
 
     local next_swipe = util.clamp(filter_swipe_base + modulation, 0, 1)
@@ -1331,7 +1361,7 @@ end
 
 local function change_filter_lfo_rate(delta)
     local previous_rate = filter_lfo_rate
-    filter_lfo_rate = util.clamp(filter_lfo_rate + (delta * 0.05), 0, 4)
+    filter_lfo_rate = util.clamp(filter_lfo_rate + (delta * 0.01), 0, 4)
 
     if previous_rate == 0 and filter_lfo_rate > 0 then
         filter_lfo_phase = 0
@@ -1358,12 +1388,10 @@ end
 
 local function change_cutoff(delta)
     engine_cutoff = util.clamp(engine_cutoff * math.pow(2, delta / 12), 40, 16000)
-    sync_filter_swipe_from_tone()
 end
 
 local function change_resonance(delta)
     engine_resonance = util.clamp(engine_resonance + (delta * 0.05), 0, 4)
-    sync_filter_swipe_from_tone()
 end
 
 local function change_drive(delta)
@@ -1475,8 +1503,11 @@ local function change_rhythm_motion_param(param_name, delta)
         change_rhythm_motion_preset(delta)
     elseif param_name == "Rate" then
         change_rhythm_motion_rate(delta)
-    elseif param_name == "Chord Engage" then
-        change_rhythm_chord_engage(delta)
+    elseif param_name == "Root Accent" and delta ~= 0 then
+        rhythm_motion.root_accent = delta > 0
+        if not rhythm_motion.root_accent then
+            rhythm_motion.root_change_pending = false
+        end
     end
 
     sync_script_params()
@@ -1490,9 +1521,23 @@ local function format_cutoff_value()
     return string.format("%d", math.floor(engine_cutoff + 0.5))
 end
 
+local function format_swipe_cutoff_value(value)
+    local cutoff = cutoff_from_filter_swipe(value)
+
+    if cutoff >= 1000 then
+        return string.format("%.1fk", cutoff / 1000)
+    end
+
+    return string.format("%d", math.floor(cutoff + 0.5))
+end
+
 local function format_filter_lfo_rate()
     if filter_lfo_rate <= 0 then
         return "Off"
+    end
+
+    if filter_lfo_rate < 0.1 then
+        return string.format("%.3f Hz", filter_lfo_rate)
     end
 
     return string.format("%.2f Hz", filter_lfo_rate)
@@ -1579,6 +1624,7 @@ sync_script_params = function()
     params:set(param_state.ids.playback, playing and 2 or 1)
     params:set(param_state.ids.chord_mode, performance_state.chord_mode_held and 2 or 1)
     params:set(param_state.ids.freeze, ((performance_state.button_1_held or performance_state.freeze_param_held) and performance_state.chord_mode_held) and 2 or 1)
+    params:set(param_state.ids.midi_channel, midi_state.input_channel + 1)
     params:set(param_state.ids.note, selected_note)
     params:set(param_state.ids.division, selected_division)
     params:set(param_state.ids.scale, selected_scale)
@@ -1608,7 +1654,9 @@ sync_script_params = function()
     params:set(param_state.ids.rhythm_motion, rhythm_motion.enabled and 2 or 1)
     params:set(param_state.ids.rhythm_preset, rhythm_motion.preset_index)
     params:set(param_state.ids.rhythm_rate, rhythm_motion.rate)
+    params:set(param_state.ids.rhythm_root_accent, rhythm_motion.root_accent and 2 or 1)
     params:set(param_state.ids.rhythm_chord, rhythm_motion.chord_engage)
+    params:set(param_state.ids.chord_multiplier, performance_state.chord_tempo_index)
     param_state.syncing = false
 end
 
@@ -1616,6 +1664,7 @@ local function init_script_params()
     local scale_names = {}
     local octave_names = {}
     local wave_names = {}
+    local midi_channel_names = {"All"}
 
     for index, scale in ipairs(scales) do
         scale_names[index] = scale.name
@@ -1635,11 +1684,15 @@ local function init_script_params()
         wave_names[index] = tostring(value)
     end
 
+    for index = 1, 16 do
+        midi_channel_names[index + 1] = tostring(index)
+    end
+
     params:add_separator("fake_script", "FAKE")
     params:add_option(param_state.ids.playback, "Playback", {"Off", "On"}, playing and 2 or 1)
     params:set_action(param_state.ids.playback, function(value)
         if param_state.syncing then return end
-        if value == 2 then start_playback() else stop_playback() end
+        if value == 2 then start_playback(not param_state.scene_loading) else stop_playback(not param_state.scene_loading) end
     end)
 
     params:add_option(param_state.ids.chord_mode, "Chord Mode", {"Off", "On"}, performance_state.chord_mode_held and 2 or 1)
@@ -1660,6 +1713,12 @@ local function init_script_params()
         update_freeze_state()
         sync_script_params()
         redraw()
+    end)
+
+    params:add_option(param_state.ids.midi_channel, "MIDI In Channel", midi_channel_names, midi_state.input_channel + 1)
+    params:set_action(param_state.ids.midi_channel, function(value)
+        if param_state.syncing then return end
+        midi_state.input_channel = value - 1
     end)
 
     params:add_option(param_state.ids.note, "Note", notes, selected_note)
@@ -1762,7 +1821,6 @@ local function init_script_params()
         action=function(value)
             if param_state.syncing then return end
             engine_cutoff = value
-            sync_filter_swipe_from_tone()
             apply_engine_params()
             sync_script_params()
             redraw()
@@ -1773,7 +1831,6 @@ local function init_script_params()
         action=function(value)
             if param_state.syncing then return end
             engine_resonance = value
-            sync_filter_swipe_from_tone()
             apply_engine_params()
             sync_script_params()
             redraw()
@@ -1917,12 +1974,29 @@ local function init_script_params()
             redraw()
         end}
 
-    params:add{type="number", id=param_state.ids.rhythm_chord, name="Chord Engage", min=0, max=100, default=rhythm_motion.chord_engage,
+    params:add_option(param_state.ids.rhythm_root_accent, "Root Accent", {"Off", "On"}, rhythm_motion.root_accent and 2 or 1)
+    params:set_action(param_state.ids.rhythm_root_accent, function(value)
+        if param_state.syncing then return end
+        rhythm_motion.root_accent = value == 2
+        if not rhythm_motion.root_accent then
+            rhythm_motion.root_change_pending = false
+        end
+        redraw()
+    end)
+
+    params:add{type="number", id=param_state.ids.rhythm_chord, name="Chord Chance", min=0, max=100, default=rhythm_motion.chord_engage,
         action=function(value)
             if param_state.syncing then return end
             rhythm_motion.chord_engage = util.clamp(value, 0, 100)
             redraw()
         end}
+
+    params:add_option(param_state.ids.chord_multiplier, "Chord Tempo Multiplier", {"4", "2", "1", "1/2", "1/4"}, performance_state.chord_tempo_index)
+    params:set_action(param_state.ids.chord_multiplier, function(value)
+        if param_state.syncing then return end
+        performance_state.chord_tempo_index = value
+        redraw()
+    end)
 end
 
 local function init_midi_devices()
@@ -1934,7 +2008,7 @@ local function init_midi_devices()
         midi_state.devices[index].event = function(data)
             local message = midi.to_msg(data)
 
-            if message.type == "note_on" and message.vel and message.vel > 0 then
+            if message.type == "note_on" and message.vel and message.vel > 0 and (midi_state.input_channel == 0 or message.ch == midi_state.input_channel) then
                 params:set(param_state.ids.note, (message.note % 12) + 1)
             end
         end
@@ -2199,7 +2273,17 @@ current_step_division = function()
     local division = clock_divisions[rhythm_motion.current_division_index]
 
     if chord_mode_active() then
-        return division * 2
+        if performance_state.chord_tempo_index == 1 then
+            return division * 4
+        elseif performance_state.chord_tempo_index == 2 then
+            return division * 2
+        elseif performance_state.chord_tempo_index == 3 then
+            return division
+        elseif performance_state.chord_tempo_index == 4 then
+            return division * 0.5
+        end
+
+        return division * 0.25
     end
 
     return division
@@ -2207,6 +2291,8 @@ end
 
 local function play_note()
     while true do
+        local force_root_event = rhythm_motion.root_accent and rhythm_motion.root_change_pending
+
         if performance_state.chord_mode_held or performance_state.freeze_active or performance_state.freeze_releasing then
             performance_state.auto_chord_for_step = false
         elseif rhythm_motion.chord_engage > 0 then
@@ -2228,12 +2314,16 @@ local function play_note()
 
         if performance_state.freeze_active or performance_state.freeze_releasing then
             -- Sustained chord is handled separately by the engine.
-        elseif math.random(100) <= rhythm_motion.current_probability then
+        elseif force_root_event or math.random(100) <= rhythm_motion.current_probability then
             local frequencies, selected_candidates = build_step_event()
             local event_amp_scale = event_dynamics_scale()
             local presence_changed = false
 
             if #frequencies > 0 then
+                if force_root_event then
+                    rhythm_motion.root_change_pending = false
+                end
+
                 if performance_state.chord_mode_held and performance_state.freeze_armed and performance_state.button_1_held then
                     start_frozen_chord(frequencies, event_amp_scale)
                 else
@@ -2272,7 +2362,7 @@ local function play_note()
     end
 end
 
-start_playback = function()
+start_playback = function(send_transport)
     if playing then
         return
     end
@@ -2283,11 +2373,20 @@ start_playback = function()
     apply_engine_params()
     clock_id = clock.run(play_note)
     playing = true
+
+    if send_transport and params:string("clock_source") ~= "midi" then
+        for _, device in pairs(midi_state.devices) do
+            if device and device.start then
+                device:start()
+            end
+        end
+    end
+
     sync_script_params()
     redraw()
 end
 
-stop_playback = function()
+stop_playback = function(send_transport)
     if not playing then
         return
     end
@@ -2303,16 +2402,33 @@ stop_playback = function()
     performance_state.freeze_releasing = false
     performance_state.freeze_release_until = 0
     reset_phrase_memory()
+
+    if send_transport and params:string("clock_source") ~= "midi" then
+        for _, device in pairs(midi_state.devices) do
+            if device and device.stop then
+                device:stop()
+            end
+        end
+    end
+
     sync_script_params()
     redraw()
 end
 
 local function toggle_playback()
     if playing then
-        stop_playback()
+        stop_playback(true)
     else
-        start_playback()
+        start_playback(true)
     end
+end
+
+function clock.transport.start()
+    start_playback()
+end
+
+function clock.transport.stop()
+    stop_playback()
 end
 
 local function tick_visualizer()
@@ -2403,6 +2519,7 @@ local function draw_visualizer_page()
 end
 
 function init()
+    util.make_dir(norns.state.data .. "scenes")
     update_presence_profiles()
     update_octave_intervals()
     reset_phrase_memory()
@@ -2532,6 +2649,42 @@ function enc(n, d)
         elseif n == 3 then
             change_rhythm_motion_param(params_page_7[ui_state.current_params[7]], d)
         end
+    elseif page == 9 then
+        if n == 2 then
+            ui_state.current_params[8] = util.clamp(ui_state.current_params[8] + d, 1, 2)
+        elseif n == 3 then
+            if ui_state.current_params[8] == 1 then
+                change_rhythm_chord_engage(d)
+            else
+                performance_state.chord_tempo_index = util.clamp(performance_state.chord_tempo_index + d, 1, 5)
+            end
+
+            sync_script_params()
+        end
+    elseif page == 10 then
+        if n == 2 then
+            ui_state.current_params[9] = util.clamp(ui_state.current_params[9] + d, 1, 3)
+        elseif n == 3 then
+            if ui_state.current_params[9] == 1 then
+                ui_state.scene_slot = util.clamp(ui_state.scene_slot + d, 1, 8)
+            elseif d ~= 0 then
+                local filename = norns.state.data .. "scenes/scene-" .. string.format("%02d", ui_state.scene_slot) .. ".pset"
+
+                if ui_state.current_params[9] == 2 then
+                    util.make_dir(norns.state.data .. "scenes")
+                    params:write(filename, "Scene " .. ui_state.scene_slot)
+                    ui_state.scene_status = "Saved " .. ui_state.scene_slot
+                elseif util.file_exists(filename) then
+                    param_state.scene_loading = true
+                    params:read(filename, false)
+                    param_state.scene_loading = false
+                    sync_script_params()
+                    ui_state.scene_status = "Loaded " .. ui_state.scene_slot
+                else
+                    ui_state.scene_status = "Empty " .. ui_state.scene_slot
+                end
+            end
+        end
     end
 
     redraw()
@@ -2623,9 +2776,9 @@ function redraw()
 
         screen.move(10, 54)
         screen.level(8)
-        screen.text("Base: " .. string.format("%.0f%%", filter_swipe_base * 100))
+        screen.text("Base: " .. format_swipe_cutoff_value(filter_swipe_base))
         screen.move(10, 62)
-        screen.text("Sweep: " .. string.format("%.0f%%", filter_swipe * 100))
+        screen.text("Sweep: " .. format_swipe_cutoff_value(filter_swipe))
     elseif page == 6 then
         for i, param_name in ipairs(params_page_5) do
             screen.move(10, y_offset + ((i - 1) * line_step))
@@ -2675,8 +2828,8 @@ function redraw()
                 screen.text(param_name .. ": " .. rhythm_motion_preset_name())
             elseif param_name == "Rate" then
                 screen.text(param_name .. ": " .. format_rhythm_motion_rate())
-            elseif param_name == "Chord Engage" then
-                screen.text(param_name .. ": " .. format_rhythm_chord_engage())
+            elseif param_name == "Root Accent" then
+                screen.text(param_name .. ": " .. (rhythm_motion.root_accent and "On" or "Off"))
             end
         end
 
@@ -2685,6 +2838,48 @@ function redraw()
         screen.text("Div " .. tempo_divisions[selected_division] .. " > " .. current_division_text())
         screen.move(10, 63)
         screen.text("Prob " .. probability .. "% > " .. current_probability_text())
+    elseif page == 9 then
+        for i = 1, 2 do
+            screen.move(10, y_offset + ((i - 1) * line_step))
+            screen.level(i == ui_state.current_params[8] and 15 or 5)
+
+            if i == 1 then
+                screen.text("Chord Chance: " .. format_rhythm_chord_engage())
+            elseif performance_state.chord_tempo_index == 1 then
+                screen.text("Tempo Mult: 4")
+            elseif performance_state.chord_tempo_index == 2 then
+                screen.text("Tempo Mult: 2")
+            elseif performance_state.chord_tempo_index == 3 then
+                screen.text("Tempo Mult: 1")
+            elseif performance_state.chord_tempo_index == 4 then
+                screen.text("Tempo Mult: 1/2")
+            else
+                screen.text("Tempo Mult: 1/4")
+            end
+        end
+    elseif page == 10 then
+        for i = 1, 3 do
+            screen.move(10, y_offset + ((i - 1) * line_step))
+            screen.level(i == ui_state.current_params[9] and 15 or 5)
+
+            if i == 1 then
+                screen.text("Slot: " .. ui_state.scene_slot)
+            elseif i == 2 then
+                screen.text("Save Scene")
+            else
+                screen.text("Load Scene")
+            end
+        end
+
+        screen.move(10, 54)
+        screen.level(8)
+        if util.file_exists(norns.state.data .. "scenes/scene-" .. string.format("%02d", ui_state.scene_slot) .. ".pset") then
+            screen.text("Status: Stored")
+        else
+            screen.text("Status: Empty")
+        end
+        screen.move(10, 62)
+        screen.text("Last: " .. ui_state.scene_status)
     end
 
     screen.update()
